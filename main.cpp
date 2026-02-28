@@ -15,6 +15,10 @@
 #include <sys/stat.h>
 #include <codecvt>
 #include <locale>
+#include <thread>       // 新增：用于处理菜单输入的线程
+#include "menu.h"
+#include "log_module.h"
+#include "config_module.h" // 新增
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -49,6 +53,7 @@ private:
     SOCKET dataSocket;
     string currentDirectory;
     string rootDirectory;
+    string clientIPStr; // 新增成员
     bool authenticated;
     sockaddr_in clientAddr;
 
@@ -112,14 +117,43 @@ public:
         clientAddr = addr;
         authenticated = true; // 简单实现，自动认证
 
+        // 【新增】将二进制 IP 转换为字符串保存
+        char ipBuf[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &(addr.sin_addr), ipBuf, INET_ADDRSTRLEN);
+        clientIPStr = string(ipBuf);
+
         // 设置根目录
         char currentPath[BUFFER_SIZE];
         _getcwd(currentPath, BUFFER_SIZE);
         rootDirectory = string(currentPath) + "\\FtpRoot";
         currentDirectory = rootDirectory;
 
-        // 创建FTP根目录
-        _mkdir(rootDirectory.c_str());
+        // 3. 创建 FTP 根目录 (如果不存在)
+        // _mkdir 返回 0 表示成功或已存在，-1 表示失败
+        if (_mkdir(rootDirectory.c_str()) == 0) {
+            cout << "Created root directory: " << rootDirectory << endl;
+        }
+
+        // 【新增】4. 定义并创建子目录
+        string publicKeyDir = rootDirectory + "\\PublicKey";
+        string uploadDir = rootDirectory + "\\UpLoad";
+
+        // 创建 PublicKey 文件夹
+        if (_mkdir(publicKeyDir.c_str()) == 0) {
+            cout << "Created subdirectory: PublicKey" << endl;
+        }
+        else {
+            // 如果失败可能是因为已存在，可以忽略错误，或者打印提示
+            cout << "Subdirectory PublicKey already exists or error." << endl;
+        }
+
+        // 创建 UpLoad 文件夹
+        if (_mkdir(uploadDir.c_str()) == 0) {
+            cout << "Created subdirectory: UpLoad" << endl;
+        }
+        else {
+             cout << "Subdirectory UpLoad already exists or error." << endl;
+        }
         dataSocket = INVALID_SOCKET;
 
         cout << "根目录: " << rootDirectory << endl;
@@ -448,6 +482,9 @@ public:
         closesocket(dataSocket);
         dataSocket = INVALID_SOCKET;
         sendResponse("226 File send OK");
+        // 【新增】记录下载日志
+        // 因为改成了普通 enum，直接使用枚举值
+        LogModule::recordLog(clientIPStr, LOG_DOWNLOAD, filename, "SUCCESS", (long)fileSize);
     }
 
     void uploadFile(const string& filename) {
@@ -485,6 +522,8 @@ public:
         closesocket(dataSocket);
         dataSocket = INVALID_SOCKET;
         sendResponse("226 File receive OK (" + to_string(totalBytes) + " bytes)");
+        // 【新增】记录上传日志
+        LogModule::recordLog(clientIPStr, LOG_UPLOAD, filename, "SUCCESS", totalBytes);
     }
 
     void deleteFile(const string& filename) {
@@ -546,6 +585,8 @@ unsigned __stdcall clientThread(void* param) {
 
 int main() {
     SetConsoleOutputCP(936);
+    // 【新增】初始化全局配置
+    ConfigModule::initConfig();
 
     // 初始化Winsock
     WSADATA wsaData;
@@ -569,11 +610,18 @@ int main() {
     // 绑定地址
     sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr = INADDR_ANY;
-    serverAddr.sin_port = htons(FTP_PORT);
+    if (inet_pton(AF_INET, g_ServerConfig.listenIP.c_str(), &serverAddr.sin_addr) <= 0) {
+        cout << "Error: Invalid configured IP address: " << g_ServerConfig.listenIP << endl;
+        closesocket(listenSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    serverAddr.sin_port = htons(g_ServerConfig.listenPort); // 也可以使用配置的端口
 
     if (bind(listenSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
-        cout << "绑定失败，错误码: " << WSAGetLastError() << endl;
+        cout << "绑定失败，错误码：" << WSAGetLastError() << endl;
+        cout << "Hint: 如果刚修改过 IP，请确保该 IP 属于本机网卡，或者重启服务器。" << endl;
         closesocket(listenSocket);
         WSACleanup();
         return 1;
@@ -612,6 +660,20 @@ int main() {
 
     cout << "等待客户端连接..." << endl;
     cout << "========================================" << endl;
+
+    // 【修改后】启动后台线程处理菜单
+   // 使用 lambda 表达式调用新模块的函数
+    thread menuThread([]() {
+        while (true) {
+            MenuModule::displayMenu();          // 1. 显示菜单
+            MenuOption choice = MenuModule::getUserChoice(); // 2. 获取输入
+            MenuModule::handleChoice(choice);   // 3. 处理逻辑
+
+            // 如果选择了退出，handleChoice 内部已经 exit(0)，不会回到这里
+            // 如果查看了日志，函数返回后循环会继续，重新显示菜单
+        }
+        });
+    menuThread.detach(); // 分离线程，让其在后台运行
 
     // 接受客户端连接
     while (true) {
