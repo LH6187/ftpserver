@@ -1,4 +1,4 @@
-#define WIN32_LEAN_AND_MEAN
+ï»¿#define WIN32_LEAN_AND_MEAN
 #define _CRT_SECURE_NO_WARNINGS
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 
@@ -15,20 +15,20 @@
 #include <sys/stat.h>
 #include <codecvt>
 #include <locale>
-#include <thread>       // ĞÂÔö£ºÓÃÓÚ´¦Àí²Ëµ¥ÊäÈëµÄÏß³Ì
+#include <thread>
 #include "menu.h"
-#include "log_module.h"
-#include "config_module.h" // ĞÂÔö
+#include "config_module.h"
+#include "db_log_module.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
 using namespace std;
 
-// ³£Á¿¶¨Òå
+// å¸¸é‡å®šä¹‰
 #define BUFFER_SIZE 4096
 #define FTP_PORT 21
 
-// ¸¨Öúº¯Êı£º½«string×ª»»Îªwstring
+// è¾…åŠ©å‡½æ•°ï¼šå°†stringè½¬æ¢ä¸ºwstring
 wstring stringToWstring(const string& str) {
     if (str.empty()) return wstring();
     int size_needed = MultiByteToWideChar(CP_UTF8, 0, &str[0], (int)str.size(), NULL, 0);
@@ -37,7 +37,7 @@ wstring stringToWstring(const string& str) {
     return wstr;
 }
 
-// ¸¨Öúº¯Êı£º½«wstring×ª»»Îªstring
+// è¾…åŠ©å‡½æ•°ï¼šå°†wstringè½¬æ¢ä¸ºstring
 string wstringToString(const wstring& wstr) {
     if (wstr.empty()) return string();
     int size_needed = WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), NULL, 0, NULL, NULL);
@@ -46,24 +46,22 @@ string wstringToString(const wstring& wstr) {
     return str;
 }
 
-// FTP»á»°Àà
+// FTPä¼šè¯ç±»
 class FtpSession {
 private:
     SOCKET controlSocket;
     SOCKET dataSocket;
     string currentDirectory;
     string rootDirectory;
-    string clientIPStr; // ĞÂÔö³ÉÔ±
+    string clientIPStr;
     bool authenticated;
     sockaddr_in clientAddr;
 
-    // ¸¨Öúº¯Êı£º½«×Ö·û´®×ª»»Îª´óĞ´
     string toUpper(string str) {
         transform(str.begin(), str.end(), str.begin(), ::toupper);
         return str;
     }
 
-    // ¸¨Öúº¯Êı£º»ñÈ¡ÎÄ¼şÁĞ±í£¨ÀàËÆls -l¸ñÊ½£©
     string getFileList(const string& path) {
         string result;
         WIN32_FIND_DATAW findData;
@@ -72,25 +70,19 @@ private:
 
         if (hFind != INVALID_HANDLE_VALUE) {
             do {
-                // Ìø¹ıµ±Ç°Ä¿Â¼ºÍ¸¸Ä¿Â¼
                 if (wcscmp(findData.cFileName, L".") == 0 ||
                     wcscmp(findData.cFileName, L"..") == 0) {
                     continue;
                 }
 
-                // ½«¿í×Ö·ûÎÄ¼şÃû×ª»»ÎªUTF-8
                 string fileName = wstringToString(findData.cFileName);
-
-                // ÎÄ¼şÈ¨ÏŞ
                 string permissions = (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ?
                     "drwxr-xr-x" : "-rw-r--r--";
 
-                // ÎÄ¼ş´óĞ¡
                 LARGE_INTEGER fileSize;
                 fileSize.HighPart = findData.nFileSizeHigh;
                 fileSize.LowPart = findData.nFileSizeLow;
 
-                // ¸ñÊ½»¯Êä³ö£¨ÀàËÆls -l¸ñÊ½£©
                 char line[512];
                 SYSTEMTIME st;
                 FileTimeToSystemTime(&findData.ftLastWriteTime, &st);
@@ -107,7 +99,6 @@ private:
             } while (FindNextFileW(hFind, &findData));
             FindClose(hFind);
         }
-
         return result;
     }
 
@@ -115,153 +106,200 @@ public:
     FtpSession(SOCKET clientSock, sockaddr_in addr) {
         controlSocket = clientSock;
         clientAddr = addr;
-        authenticated = true; // ¼òµ¥ÊµÏÖ£¬×Ô¶¯ÈÏÖ¤
+        authenticated = true;
 
-        // ¡¾ĞÂÔö¡¿½«¶ş½øÖÆ IP ×ª»»Îª×Ö·û´®±£´æ
         char ipBuf[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &(addr.sin_addr), ipBuf, INET_ADDRSTRLEN);
         clientIPStr = string(ipBuf);
 
-        // ÉèÖÃ¸ùÄ¿Â¼
         char currentPath[BUFFER_SIZE];
         _getcwd(currentPath, BUFFER_SIZE);
         rootDirectory = string(currentPath) + "\\FtpRoot";
         currentDirectory = rootDirectory;
 
-        // 3. ´´½¨ FTP ¸ùÄ¿Â¼ (Èç¹û²»´æÔÚ)
-        // _mkdir ·µ»Ø 0 ±íÊ¾³É¹¦»òÒÑ´æÔÚ£¬-1 ±íÊ¾Ê§°Ü
         if (_mkdir(rootDirectory.c_str()) == 0) {
             cout << "Created root directory: " << rootDirectory << endl;
         }
 
-        // ¡¾ĞÂÔö¡¿4. ¶¨Òå²¢´´½¨×ÓÄ¿Â¼
         string publicKeyDir = rootDirectory + "\\PublicKey";
         string uploadDir = rootDirectory + "\\UpLoad";
 
-        // ´´½¨ PublicKey ÎÄ¼ş¼Ğ
         if (_mkdir(publicKeyDir.c_str()) == 0) {
             cout << "Created subdirectory: PublicKey" << endl;
         }
-        else {
-            // Èç¹ûÊ§°Ü¿ÉÄÜÊÇÒòÎªÒÑ´æÔÚ£¬¿ÉÒÔºöÂÔ´íÎó£¬»òÕß´òÓ¡ÌáÊ¾
-            cout << "Subdirectory PublicKey already exists or error." << endl;
-        }
-
-        // ´´½¨ UpLoad ÎÄ¼ş¼Ğ
         if (_mkdir(uploadDir.c_str()) == 0) {
             cout << "Created subdirectory: UpLoad" << endl;
         }
-        else {
-             cout << "Subdirectory UpLoad already exists or error." << endl;
-        }
         dataSocket = INVALID_SOCKET;
-
-        cout << "¸ùÄ¿Â¼: " << rootDirectory << endl;
+        cout << "æ ¹ç›®å½•: " << rootDirectory << endl;
     }
 
     void sendResponse(const string& response) {
         string msg = response + "\r\n";
         send(controlSocket, msg.c_str(), msg.length(), 0);
-        cout << "·¢ËÍ: " << response << endl;
+        cout << "å‘é€: " << response << endl;
     }
 
     string receiveCommand() {
         char buffer[BUFFER_SIZE] = { 0 };
         int bytesReceived = recv(controlSocket, buffer, BUFFER_SIZE - 1, 0);
-
-        if (bytesReceived <= 0) {
-            return "";
-        }
-
+        if (bytesReceived <= 0) return "";
         string command(buffer);
-        // ÒÆ³ıÄ©Î²µÄ\r\n
         size_t pos = command.find("\r\n");
-        if (pos != string::npos) {
-            command = command.substr(0, pos);
-        }
+        if (pos != string::npos) command = command.substr(0, pos);
         return command;
     }
 
     void process() {
         sendResponse("220 Simple FTP Server Ready");
-
         while (true) {
             string commandLine = receiveCommand();
-            if (commandLine.empty()) {
-                break;
-            }
-
-            cout << "ÊÕµ½ÃüÁî: " << commandLine << endl;
+            if (commandLine.empty()) break;
+            cout << "æ”¶åˆ°å‘½ä»¤: " << commandLine << endl;
             processCommand(commandLine);
         }
-
         closesocket(controlSocket);
-        if (dataSocket != INVALID_SOCKET) {
-            closesocket(dataSocket);
-        }
+        if (dataSocket != INVALID_SOCKET) closesocket(dataSocket);
     }
 
     void processCommand(const string& commandLine) {
-        // ½âÎöÃüÁîºÍ²ÎÊı
+        // è§£æå‘½ä»¤å’Œå‚æ•°
         size_t spacePos = commandLine.find(' ');
-        string cmd = (spacePos != string::npos) ?
-            commandLine.substr(0, spacePos) : commandLine;
-        string param = (spacePos != string::npos) ?
-            commandLine.substr(spacePos + 1) : "";
+        string cmd = (spacePos != string::npos) ? commandLine.substr(0, spacePos) : commandLine;
+        string param = (spacePos != string::npos) ? commandLine.substr(spacePos + 1) : "";
 
-        // ×ª»»Îª´óĞ´ÃüÁî
-        cmd = toUpper(cmd);
+        // è½¬æ¢ä¸ºå¤§å†™ç”¨äºå‘½ä»¤åŒ¹é…
+        string upperCmd = cmd;
+        transform(upperCmd.begin(), upperCmd.end(), upperCmd.begin(), ::toupper);
 
-        cout << "½âÎöÃüÁî: " << cmd << ", ²ÎÊı: " << param << endl;
+        cout << "æ”¶åˆ°å‘½ä»¤: " << commandLine << endl;
+        cout << "å‘½ä»¤: " << upperCmd << ", å‚æ•°: " << param << endl;
 
-        if (cmd == "USER") {
+        // å¤„ç†ç”¨æˆ·å‘½ä»¤
+        if (upperCmd == "USER") {
             sendResponse("331 User name okay, need password");
         }
-        else if (cmd == "PASS") {
+        // å¤„ç†å¯†ç å‘½ä»¤
+        else if (upperCmd == "PASS") {
             sendResponse("230 User logged in");
         }
-        else if (cmd == "PWD" || cmd == "XPWD") {
+        // å¤„ç†å½“å‰ç›®å½•å‘½ä»¤
+        else if (upperCmd == "PWD" || upperCmd == "XPWD") {
             string relativePath = getRelativePath(currentDirectory);
             sendResponse("257 \"" + relativePath + "\" is current directory");
         }
-        else if (cmd == "CWD") {
+        // å¤„ç†åˆ‡æ¢ç›®å½•å‘½ä»¤
+        else if (upperCmd == "CWD") {
             changeDirectory(param);
         }
-        else if (cmd == "CDUP") {
+        // å¤„ç†è¿”å›ä¸Šçº§ç›®å½•å‘½ä»¤
+        else if (upperCmd == "CDUP") {
             changeDirectory("..");
         }
-        else if (cmd == "LIST" || cmd == "NLST") {
-            listDirectory(param);
+        // å¤„ç† ls å‘½ä»¤ï¼ˆWindowså®¢æˆ·ç«¯å¸¸ç”¨ï¼‰
+        else if (upperCmd == "LS") {
+            cout << "å¤„ç† LS å‘½ä»¤ï¼Œå‚æ•°: " << param << endl;
+
+            // æ£€æŸ¥å‚æ•°
+            if (param.empty()) {
+                // ls ä¸å¸¦å‚æ•° - æ˜¾ç¤ºè¯¦ç»†ä¿¡æ¯
+                cout << "LS æ— å‚æ•°ï¼Œæ˜¾ç¤ºè¯¦ç»†ä¿¡æ¯" << endl;
+                listDirectory("", false);
+            }
+            else if (param == "-l") {
+                // ls -l - æ˜¾ç¤ºè¯¦ç»†ä¿¡æ¯ï¼ˆé•¿æ ¼å¼ï¼‰
+                cout << "LS -l å‚æ•°ï¼Œæ˜¾ç¤ºè¯¦ç»†ä¿¡æ¯" << endl;
+                listDirectory("", false);
+            }
+            else if (param == "-1") {
+                // ls -1 - åªæ˜¾ç¤ºæ–‡ä»¶å
+                cout << "LS -1 å‚æ•°ï¼Œåªæ˜¾ç¤ºæ–‡ä»¶å" << endl;
+                listDirectory("", true);
+            }
+            else {
+                // å¸¦è·¯å¾„çš„ lsï¼Œå¦‚ "ls /folder"
+                cout << "LS å¸¦è·¯å¾„: " << param << endl;
+
+                // æ£€æŸ¥è·¯å¾„å‰æ˜¯å¦æœ‰é€‰é¡¹
+                if (param[0] == '-') {
+                    size_t spacePos2 = param.find(' ');
+                    if (spacePos2 != string::npos) {
+                        string option = param.substr(0, spacePos2);
+                        string path = param.substr(spacePos2 + 1);
+
+                        if (option == "-l") {
+                            listDirectory(path, false);
+                        }
+                        else if (option == "-1") {
+                            listDirectory(path, true);
+                        }
+                        else {
+                            listDirectory(path, false);
+                        }
+                    }
+                    else {
+                        listDirectory("", false);
+                    }
+                }
+                else {
+                    listDirectory(param, false);
+                }
+            }
         }
-        else if (cmd == "PORT") {
+        // å¤„ç† dir å‘½ä»¤ï¼ˆWindowså®¢æˆ·ç«¯å¸¸ç”¨ï¼‰- å§‹ç»ˆæ˜¾ç¤ºè¯¦ç»†ä¿¡æ¯
+        else if (upperCmd == "DIR") {
+            cout << "å¤„ç† DIR å‘½ä»¤" << endl;
+            listDirectory(param, false);
+        }
+        // å¤„ç† LIST å‘½ä»¤ï¼ˆæ ‡å‡†FTPå‘½ä»¤ï¼‰
+        else if (upperCmd == "LIST") {
+            cout << "å¤„ç† LIST å‘½ä»¤" << endl;
+            listDirectory(param, false);
+        }
+        // å¤„ç† NLST å‘½ä»¤ï¼ˆæ ‡å‡†FTPå‘½ä»¤ï¼‰- åªæ˜¾ç¤ºæ–‡ä»¶å
+        else if (upperCmd == "NLST") {
+            cout << "å¤„ç† NLST å‘½ä»¤" << endl;
+            listDirectory(param, true);
+        }
+        // å¤„ç† PORT å‘½ä»¤
+        else if (upperCmd == "PORT") {
             setPort(param);
         }
-        else if (cmd == "PASV") {
+        // å¤„ç†è¢«åŠ¨æ¨¡å¼ï¼ˆæš‚æœªå®ç°ï¼‰
+        else if (upperCmd == "PASV") {
             sendResponse("502 Passive mode not implemented");
         }
-        else if (cmd == "RETR") {
+        // å¤„ç†ä¸‹è½½æ–‡ä»¶å‘½ä»¤
+        else if (upperCmd == "RETR" || upperCmd == "GET") {
             downloadFile(param);
         }
-        else if (cmd == "STOR") {
+        // å¤„ç†ä¸Šä¼ æ–‡ä»¶å‘½ä»¤
+        else if (upperCmd == "STOR" || upperCmd == "PUT") {
             uploadFile(param);
         }
-        else if (cmd == "DELE") {
+        // å¤„ç†åˆ é™¤æ–‡ä»¶å‘½ä»¤
+        else if (upperCmd == "DELE" || upperCmd == "DELETE") {
             deleteFile(param);
         }
-        else if (cmd == "MKD") {
+        // å¤„ç†åˆ›å»ºç›®å½•å‘½ä»¤
+        else if (upperCmd == "MKD" || upperCmd == "MKDIR") {
             makeDirectory(param);
         }
-        else if (cmd == "RMD") {
+        // å¤„ç†åˆ é™¤ç›®å½•å‘½ä»¤
+        else if (upperCmd == "RMD" || upperCmd == "RMDIR") {
             removeDirectory(param);
         }
-        else if (cmd == "RNFR") {
+        // å¤„ç†é‡å‘½åå‘½ä»¤ï¼ˆæºæ–‡ä»¶ï¼‰
+        else if (upperCmd == "RNFR") {
             sendResponse("350 Ready for RNTO");
-            // ¼ò»¯ÊµÏÖ£¬Êµ¼ÊĞèÒª±£´æÎÄ¼şÃû
+            // ç®€åŒ–å®ç°ï¼Œå®é™…éœ€è¦ä¿å­˜æ–‡ä»¶å
         }
-        else if (cmd == "RNTO") {
+        // å¤„ç†é‡å‘½åå‘½ä»¤ï¼ˆç›®æ ‡æ–‡ä»¶ï¼‰
+        else if (upperCmd == "RNTO") {
             sendResponse("250 Rename successful");
         }
-        else if (cmd == "TYPE") {
+        // å¤„ç†ä¼ è¾“ç±»å‹å‘½ä»¤
+        else if (upperCmd == "TYPE") {
             if (param == "I" || param == "A") {
                 sendResponse("200 Type set to " + param);
             }
@@ -269,34 +307,44 @@ public:
                 sendResponse("504 Command not implemented for that parameter");
             }
         }
-        else if (cmd == "SYST") {
+        // å¤„ç†ç³»ç»Ÿç±»å‹å‘½ä»¤
+        else if (upperCmd == "SYST") {
             sendResponse("215 Windows_NT");
         }
-        else if (cmd == "FEAT") {
+        // å¤„ç†ç‰¹æ€§å‘½ä»¤
+        else if (upperCmd == "FEAT") {
             sendResponse("211-Features:\r\n211 End");
         }
-        else if (cmd == "NOOP") {
+        // å¤„ç†é€‰é¡¹å‘½ä»¤
+        else if (upperCmd == "OPTS") {
+            if (param.find("UTF8") != string::npos) {
+                sendResponse("200 UTF8 mode enabled");
+            }
+            else {
+                sendResponse("200 OK");
+            }
+        }
+        // å¤„ç†ç©ºæ“ä½œå‘½ä»¤
+        else if (upperCmd == "NOOP") {
             sendResponse("200 NOOP command successful");
         }
-        else if (cmd == "QUIT") {
+        // å¤„ç†é€€å‡ºå‘½ä»¤
+        else if (upperCmd == "QUIT" || upperCmd == "BYE" || upperCmd == "EXIT") {
             sendResponse("221 Goodbye");
             throw exception("Client disconnected");
         }
+        // æœªçŸ¥å‘½ä»¤
         else {
-            sendResponse("502 Command not implemented: " + cmd);
+            cout << "æœªçŸ¥å‘½ä»¤: " << upperCmd << endl;
+            sendResponse("502 Command not implemented: " + upperCmd);
         }
     }
 
     string getRelativePath(const string& path) {
         if (path.find(rootDirectory) == 0) {
             string relPath = path.substr(rootDirectory.length());
-            // Ìæ»»·´Ğ±¸ÜÎªÕıĞ±¸Ü
-            for (char& c : relPath) {
-                if (c == '\\') c = '/';
-            }
-            if (relPath.empty() || relPath[0] != '/') {
-                relPath = "/" + relPath;
-            }
+            for (char& c : relPath) if (c == '\\') c = '/';
+            if (relPath.empty() || relPath[0] != '/') relPath = "/" + relPath;
             return relPath;
         }
         return "/";
@@ -304,68 +352,40 @@ public:
 
     void changeDirectory(const string& path) {
         string newPath;
-
-        if (path.empty()) {
-            newPath = rootDirectory;
-        }
-        else if (path == "/") {
-            newPath = rootDirectory;
-        }
+        if (path.empty()) newPath = rootDirectory;
+        else if (path == "/") newPath = rootDirectory;
         else if (path == "..") {
-            // ·µ»ØÉÏÒ»¼¶Ä¿Â¼£¬µ«²»ÄÜ³¬³ö¸ùÄ¿Â¼
             size_t pos = currentDirectory.find_last_of('\\');
-            if (pos != string::npos && currentDirectory.length() > rootDirectory.length()) {
+            if (pos != string::npos && currentDirectory.length() > rootDirectory.length())
                 newPath = currentDirectory.substr(0, pos);
-            }
-            else {
-                newPath = rootDirectory;
-            }
+            else newPath = rootDirectory;
         }
         else if (path[0] == '/') {
-            // ¾ø¶ÔÂ·¾¶
             newPath = rootDirectory + path;
-            // Ìæ»»ÕıĞ±¸ÜÎª·´Ğ±¸Ü
-            for (char& c : newPath) {
-                if (c == '/') c = '\\';
-            }
+            for (char& c : newPath) if (c == '/') c = '\\';
         }
-        else {
-            // Ïà¶ÔÂ·¾¶
-            newPath = currentDirectory + "\\" + path;
-        }
+        else newPath = currentDirectory + "\\" + path;
 
-        // ¼ì²éÄ¿Â¼ÊÇ·ñ´æÔÚ
         struct stat info;
         if (stat(newPath.c_str(), &info) == 0 && (info.st_mode & S_IFDIR)) {
             currentDirectory = newPath;
             sendResponse("250 Directory changed to " + getRelativePath(currentDirectory));
         }
-        else {
-            sendResponse("550 Directory not found: " + path);
-        }
+        else sendResponse("550 Directory not found: " + path);
     }
 
     void setPort(const string& param) {
-        // ½âÎöPORTÃüÁî: h1,h2,h3,h4,p1,p2
         vector<string> parts;
         stringstream ss(param);
         string part;
-
-        while (getline(ss, part, ',')) {
-            parts.push_back(part);
-        }
+        while (getline(ss, part, ',')) parts.push_back(part);
 
         if (parts.size() == 6) {
             string ip = parts[0] + "." + parts[1] + "." + parts[2] + "." + parts[3];
             int port = (stoi(parts[4]) << 8) + stoi(parts[5]);
+            cout << "PORTå‘½ä»¤: IP=" << ip << ", Port=" << port << endl;
 
-            cout << "PORTÃüÁî: IP=" << ip << ", Port=" << port << endl;
-
-            // ´´½¨Êı¾İÁ¬½Ó
-            if (dataSocket != INVALID_SOCKET) {
-                closesocket(dataSocket);
-            }
-
+            if (dataSocket != INVALID_SOCKET) closesocket(dataSocket);
             dataSocket = socket(AF_INET, SOCK_STREAM, 0);
             if (dataSocket == INVALID_SOCKET) {
                 sendResponse("425 Can't create data socket");
@@ -375,8 +395,6 @@ public:
             sockaddr_in dataAddr;
             dataAddr.sin_family = AF_INET;
             dataAddr.sin_port = htons(port);
-
-            // Ê¹ÓÃ inet_pton Ìæ´ú inet_addr
             if (inet_pton(AF_INET, ip.c_str(), &dataAddr.sin_addr) <= 0) {
                 sendResponse("425 Invalid IP address");
                 closesocket(dataSocket);
@@ -384,30 +402,59 @@ public:
                 return;
             }
 
-            if (connect(dataSocket, (sockaddr*)&dataAddr, sizeof(dataAddr)) == 0) {
+            if (connect(dataSocket, (sockaddr*)&dataAddr, sizeof(dataAddr)) == 0)
                 sendResponse("200 Port command successful");
-            }
             else {
                 sendResponse("425 Can't open data connection");
                 closesocket(dataSocket);
                 dataSocket = INVALID_SOCKET;
             }
         }
-        else {
-            sendResponse("501 Syntax error in parameters");
-        }
+        else sendResponse("501 Syntax error in parameters");
     }
 
-    void listDirectory(const string& path) {
+
+
+    // åªè·å–æ–‡ä»¶åçš„åˆ—è¡¨ï¼ˆNLSTæ¨¡å¼ï¼‰
+    string getNameOnlyList(const string& path) {
+        string result;
+        WIN32_FIND_DATAW findData;
+        wstring searchPath = stringToWstring(path + "\\*");
+        HANDLE hFind = FindFirstFileW(searchPath.c_str(), &findData);
+
+        if (hFind != INVALID_HANDLE_VALUE) {
+            do {
+                if (wcscmp(findData.cFileName, L".") == 0 ||
+                    wcscmp(findData.cFileName, L"..") == 0) {
+                    continue;
+                }
+
+                string fileName = wstringToString(findData.cFileName);
+                result += fileName + "\r\n";
+
+            } while (FindNextFileW(hFind, &findData));
+            FindClose(hFind);
+        }
+        return result;
+    }
+
+    void listDirectory(const string& path, bool nameOnly = false) {
         if (dataSocket == INVALID_SOCKET) {
             sendResponse("425 No data connection");
             return;
         }
 
-        sendResponse("150 Opening data connection for directory list");
+        // æ ¹æ®æ¨¡å¼å‘é€ä¸åŒçš„å“åº”æ¶ˆæ¯
+        if (nameOnly) {
+            sendResponse("150 Opening ASCII mode data connection for file list");
+        }
+        else {
+            sendResponse("150 Opening data connection for directory list");
+        }
 
+        // ç¡®å®šç›®æ ‡è·¯å¾„
         string targetPath = currentDirectory;
-        if (!path.empty() && path != "-a" && path != "-l") {
+        if (!path.empty() && path != "-a" && path != "-l" && path != "-1") {
             if (path[0] == '/') {
                 targetPath = rootDirectory + path;
                 for (char& c : targetPath) if (c == '/') c = '\\';
@@ -417,19 +464,32 @@ public:
             }
         }
 
-        // »ñÈ¡ÎÄ¼şÁĞ±í
-        string fileList = getFileList(targetPath);
+        cout << "åˆ—å‡ºç›®å½•: " << targetPath << ", æ¨¡å¼: " << (nameOnly ? "ä»…æ–‡ä»¶å" : "è¯¦ç»†ä¿¡æ¯") << endl;
 
-        // ·¢ËÍÎÄ¼şÁĞ±í
+        string fileList;
+        if (nameOnly) {
+            // NLST æ¨¡å¼ï¼šåªè¿”å›æ–‡ä»¶å
+            fileList = getNameOnlyList(targetPath);
+        }
+        else {
+            // LIST æ¨¡å¼ï¼šè¿”å›è¯¦ç»†ä¿¡æ¯
+            fileList = getFileList(targetPath);
+        }
+
+        // å‘é€æ•°æ®
         int totalSent = 0;
         int bytesToSend = fileList.length();
-
         while (totalSent < bytesToSend) {
             int sent = send(dataSocket, fileList.c_str() + totalSent,
                 bytesToSend - totalSent, 0);
-            if (sent <= 0) break;
+            if (sent <= 0) {
+                cout << "å‘é€æ•°æ®å¤±è´¥" << endl;
+                break;
+            }
             totalSent += sent;
         }
+
+        cout << "å·²å‘é€ " << totalSent << " å­—èŠ‚çš„æ•°æ®" << endl;
 
         closesocket(dataSocket);
         dataSocket = INVALID_SOCKET;
@@ -441,7 +501,6 @@ public:
             sendResponse("425 No data connection");
             return;
         }
-
         if (filename.empty()) {
             sendResponse("501 No file name specified");
             return;
@@ -449,20 +508,15 @@ public:
 
         string filepath = currentDirectory + "\\" + filename;
         ifstream file(filepath, ios::binary | ios::ate);
-
         if (!file) {
             sendResponse("550 File not found");
             return;
         }
 
-        // »ñÈ¡ÎÄ¼ş´óĞ¡
         streampos fileSize = file.tellg();
         file.seekg(0, ios::beg);
+        sendResponse("150 Opening data connection for file download (" + to_string(fileSize) + " bytes)");
 
-        sendResponse("150 Opening data connection for file download (" +
-            to_string(fileSize) + " bytes)");
-
-        // ·¢ËÍÎÄ¼ş
         char buffer[BUFFER_SIZE];
         while (file.read(buffer, BUFFER_SIZE)) {
             int bytesRead = file.gcount();
@@ -473,26 +527,56 @@ public:
                 totalSent += sent;
             }
         }
-        // ·¢ËÍ×îºóÒ»²¿·Ö
-        if (file.gcount() > 0) {
-            send(dataSocket, buffer, file.gcount(), 0);
-        }
+        if (file.gcount() > 0) send(dataSocket, buffer, file.gcount(), 0);
 
         file.close();
         closesocket(dataSocket);
         dataSocket = INVALID_SOCKET;
         sendResponse("226 File send OK");
-        // ¡¾ĞÂÔö¡¿¼ÇÂ¼ÏÂÔØÈÕÖ¾
-        // ÒòÎª¸Ä³ÉÁËÆÕÍ¨ enum£¬Ö±½ÓÊ¹ÓÃÃ¶¾ÙÖµ
-        LogModule::recordLog(clientIPStr, LOG_DOWNLOAD, filename, "SUCCESS", (long)fileSize);
+        DbLogModule::recordLog(clientIPStr, DB_LOG_DOWNLOAD, filename, "SUCCESS", (long)fileSize);
     }
+
+
+    // ä¸åŒºåˆ†å¤§å°å†™çš„å­—ç¬¦ä¸²æŸ¥æ‰¾å‡½æ•°
+    bool caseInsensitiveFind(const string& haystack, const string& needle) {
+        if (needle.empty()) return false;
+
+        string haystackLower = haystack;
+        string needleLower = needle;
+
+        // è½¬æ¢ä¸ºå°å†™
+        transform(haystackLower.begin(), haystackLower.end(), haystackLower.begin(), ::tolower);
+        transform(needleLower.begin(), needleLower.end(), needleLower.begin(), ::tolower);
+
+        return haystackLower.find(needleLower) != string::npos;
+    }
+
+
+    // åœ¨ main å‡½æ•°ä¸­ï¼Œåˆå§‹åŒ–æ•°æ®åº“åè°ƒç”¨
+    int main() {
+        SetConsoleOutputCP(936);
+
+        // åˆå§‹åŒ–æ•°æ®åº“æ—¥å¿—æ¨¡å—
+        if (!DbLogModule::initialize("ftp_server.db")) {
+            cout << "è­¦å‘Š: æ•°æ®åº“æ—¥å¿—æ¨¡å—åˆå§‹åŒ–å¤±è´¥" << endl;
+            return 1;
+        }
+        else {
+            cout << "æ•°æ®åº“æ—¥å¿—æ¨¡å—åˆå§‹åŒ–æˆåŠŸ" << endl;
+
+
+            DbLogModule::recordLog("SYSTEM", DB_LOG_SERVER_START, "FTP Server", "STARTED", 0);
+        }
+
+        // ... å…¶ä½™ä»£ç  ...
+    }
+
 
     void uploadFile(const string& filename) {
         if (dataSocket == INVALID_SOCKET) {
             sendResponse("425 No data connection");
             return;
         }
-
         if (filename.empty()) {
             sendResponse("501 No file name specified");
             return;
@@ -500,19 +584,15 @@ public:
 
         string filepath = currentDirectory + "\\" + filename;
         ofstream file(filepath, ios::binary);
-
         if (!file) {
             sendResponse("550 Can't create file");
             return;
         }
 
         sendResponse("150 Opening data connection for file upload");
-
-        // ½ÓÊÕÎÄ¼ş
         char buffer[BUFFER_SIZE];
         int bytesReceived;
         int totalBytes = 0;
-
         while ((bytesReceived = recv(dataSocket, buffer, BUFFER_SIZE, 0)) > 0) {
             file.write(buffer, bytesReceived);
             totalBytes += bytesReceived;
@@ -522,45 +602,39 @@ public:
         closesocket(dataSocket);
         dataSocket = INVALID_SOCKET;
         sendResponse("226 File receive OK (" + to_string(totalBytes) + " bytes)");
-        // ¡¾ĞÂÔö¡¿¼ÇÂ¼ÉÏ´«ÈÕÖ¾
-        LogModule::recordLog(clientIPStr, LOG_UPLOAD, filename, "SUCCESS", totalBytes);
+
+        // åªä¿ç•™æ—¥å¿—è®°å½•ï¼Œç§»é™¤ä¸¤ä¸ªè¡¨çš„æ’å…¥ä»£ç 
+        DbLogModule::recordLog(clientIPStr, DB_LOG_UPLOAD, filename, "SUCCESS", totalBytes);
+
+        // è°ƒè¯•è¾“å‡ºå½“å‰ç›®å½•ï¼ˆå¯é€‰ä¿ç•™ï¼‰
+        cout << "å½“å‰ç›®å½•: " << currentDirectory << endl;
+        cout << "ä¸Šä¼ æ–‡ä»¶å: " << filename << endl;
+        cout << "æ–‡ä»¶å¤§å°: " << totalBytes << " bytes" << endl;
     }
 
     void deleteFile(const string& filename) {
         string filepath = currentDirectory + "\\" + filename;
         wstring wFilePath = stringToWstring(filepath);
-        if (DeleteFileW(wFilePath.c_str())) {
-            sendResponse("250 File deleted successfully");
-        }
-        else {
-            sendResponse("550 Could not delete file");
-        }
+        if (DeleteFileW(wFilePath.c_str())) sendResponse("250 File deleted successfully");
+        else sendResponse("550 Could not delete file");
     }
 
     void makeDirectory(const string& dirname) {
         string dirpath = currentDirectory + "\\" + dirname;
         wstring wDirPath = stringToWstring(dirpath);
-        if (CreateDirectoryW(wDirPath.c_str(), NULL)) {
-            sendResponse("257 Directory created");
-        }
-        else {
-            sendResponse("550 Could not create directory");
-        }
+        if (CreateDirectoryW(wDirPath.c_str(), NULL)) sendResponse("257 Directory created");
+        else sendResponse("550 Could not create directory");
     }
 
     void removeDirectory(const string& dirname) {
         string dirpath = currentDirectory + "\\" + dirname;
         wstring wDirPath = stringToWstring(dirpath);
-        if (RemoveDirectoryW(wDirPath.c_str())) {
-            sendResponse("250 Directory removed");
-        }
-        else {
-            sendResponse("550 Could not remove directory");
-        }
+        if (RemoveDirectoryW(wDirPath.c_str())) sendResponse("250 Directory removed");
+        else sendResponse("550 Could not remove directory");
     }
 };
 
-// Ïß³Ìº¯Êı
+// çº¿ç¨‹å‡½æ•°
 unsigned __stdcall clientThread(void* param) {
     SOCKET clientSocket = (SOCKET)param;
     sockaddr_in clientAddr;
@@ -569,45 +643,53 @@ unsigned __stdcall clientThread(void* param) {
 
     char clientIP[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &(clientAddr.sin_addr), clientIP, INET_ADDRSTRLEN);
-    cout << "¿Í»§¶ËÁ¬½Ó: " << clientIP << ":" << ntohs(clientAddr.sin_port) << endl;
+    cout << "å®¢æˆ·ç«¯è¿æ¥: " << clientIP << ":" << ntohs(clientAddr.sin_port) << endl;
 
     try {
         FtpSession session(clientSocket, clientAddr);
         session.process();
     }
     catch (const exception& e) {
-        cout << "¿Í»§¶Ë»á»°½áÊø: " << e.what() << endl;
+        cout << "å®¢æˆ·ç«¯ä¼šè¯ç»“æŸ: " << e.what() << endl;
     }
 
-    cout << "¿Í»§¶Ë¶Ï¿ª: " << clientIP << ":" << ntohs(clientAddr.sin_port) << endl;
+    cout << "å®¢æˆ·ç«¯æ–­å¼€: " << clientIP << ":" << ntohs(clientAddr.sin_port) << endl;
     return 0;
 }
 
 int main() {
     SetConsoleOutputCP(936);
-    // ¡¾ĞÂÔö¡¿³õÊ¼»¯È«¾ÖÅäÖÃ
+
+    // åˆå§‹åŒ–æ•°æ®åº“æ—¥å¿—æ¨¡å—
+    if (!DbLogModule::initialize("ftp_server.db")) {
+        cout << "è­¦å‘Š: æ•°æ®åº“æ—¥å¿—æ¨¡å—åˆå§‹åŒ–å¤±è´¥" << endl;
+        return 1;
+    }
+    else {
+        cout << "æ•°æ®åº“æ—¥å¿—æ¨¡å—åˆå§‹åŒ–æˆåŠŸ" << endl;
+
+
+        DbLogModule::recordLog("SYSTEM", DB_LOG_SERVER_START, "FTP Server", "STARTED", 0);
+    }
+    // åˆå§‹åŒ–å…¨å±€é…ç½®
     ConfigModule::initConfig();
 
-    // ³õÊ¼»¯Winsock
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        cout << "WSAStartupÊ§°Ü" << endl;
+        cout << "WSAStartupå¤±è´¥" << endl;
         return 1;
     }
 
-    // ´´½¨¼àÌıÌ×½Ó×Ö
     SOCKET listenSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (listenSocket == INVALID_SOCKET) {
-        cout << "´´½¨Ì×½Ó×ÖÊ§°Ü" << endl;
+        cout << "åˆ›å»ºå¥—æ¥å­—å¤±è´¥" << endl;
         WSACleanup();
         return 1;
     }
 
-    // ÔÊĞíµØÖ·ÖØÓÃ
     int opt = 1;
     setsockopt(listenSocket, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
 
-    // °ó¶¨µØÖ·
     sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
     if (inet_pton(AF_INET, g_ServerConfig.listenIP.c_str(), &serverAddr.sin_addr) <= 0) {
@@ -616,36 +698,33 @@ int main() {
         WSACleanup();
         return 1;
     }
+    serverAddr.sin_port = htons(g_ServerConfig.listenPort);
 
-    serverAddr.sin_port = htons(g_ServerConfig.listenPort); // Ò²¿ÉÒÔÊ¹ÓÃÅäÖÃµÄ¶Ë¿Ú
-
-    if (bind(listenSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
-        cout << "°ó¶¨Ê§°Ü£¬´íÎóÂë£º" << WSAGetLastError() << endl;
-        cout << "Hint: Èç¹û¸ÕĞŞ¸Ä¹ı IP£¬ÇëÈ·±£¸Ã IP ÊôÓÚ±¾»úÍø¿¨£¬»òÕßÖØÆô·şÎñÆ÷¡£" << endl;
+    if (::bind(listenSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+        cout << "ç»‘å®šå¤±è´¥ï¼Œé”™è¯¯ç ï¼š" << WSAGetLastError() << endl;
+        cout << "Hint: å¦‚æœåˆšä¿®æ”¹è¿‡ IPï¼Œè¯·ç¡®ä¿è¯¥ IP å±äºæœ¬æœºç½‘å¡ï¼Œæˆ–è€…é‡å¯æœåŠ¡å™¨ã€‚" << endl;
         closesocket(listenSocket);
         WSACleanup();
         return 1;
     }
 
-    // ¿ªÊ¼¼àÌı
     if (listen(listenSocket, SOMAXCONN) == SOCKET_ERROR) {
-        cout << "¼àÌıÊ§°Ü" << endl;
+        cout << "ç›‘å¬å¤±è´¥" << endl;
         closesocket(listenSocket);
         WSACleanup();
         return 1;
     }
 
     cout << "========================================" << endl;
-    cout << "FTP·şÎñÆ÷Æô¶¯ÔÚ¶Ë¿Ú " << FTP_PORT << endl;
-    cout << "±¾»úIPµØÖ·: " << endl;
+    cout << "FTPæœåŠ¡å™¨å¯åŠ¨åœ¨ç«¯å£ " << FTP_PORT << endl;
+    cout << "æœ¬æœºIPåœ°å€: " << endl;
 
-    // Ê¹ÓÃgetaddrinfoÌæ´úgethostbyname
     char hostname[256];
     gethostname(hostname, sizeof(hostname));
 
     struct addrinfo hints, * res, * p;
     memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_INET; // IPv4
+    hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
 
     if (getaddrinfo(hostname, NULL, &hints, &res) == 0) {
@@ -658,48 +737,38 @@ int main() {
         freeaddrinfo(res);
     }
 
-    cout << "µÈ´ı¿Í»§¶ËÁ¬½Ó..." << endl;
+    cout << "ç­‰å¾…å®¢æˆ·ç«¯è¿æ¥..." << endl;
     cout << "========================================" << endl;
 
-    // ¡¾ĞŞ¸Äºó¡¿Æô¶¯ºóÌ¨Ïß³Ì´¦Àí²Ëµ¥
-   // Ê¹ÓÃ lambda ±í´ïÊ½µ÷ÓÃĞÂÄ£¿éµÄº¯Êı
     thread menuThread([]() {
         while (true) {
-            MenuModule::displayMenu();          // 1. ÏÔÊ¾²Ëµ¥
-            MenuOption choice = MenuModule::getUserChoice(); // 2. »ñÈ¡ÊäÈë
-            MenuModule::handleChoice(choice);   // 3. ´¦ÀíÂß¼­
-
-            // Èç¹ûÑ¡ÔñÁËÍË³ö£¬handleChoice ÄÚ²¿ÒÑ¾­ exit(0)£¬²»»á»Øµ½ÕâÀï
-            // Èç¹û²é¿´ÁËÈÕÖ¾£¬º¯Êı·µ»ØºóÑ­»·»á¼ÌĞø£¬ÖØĞÂÏÔÊ¾²Ëµ¥
+            MenuModule::displayMenu();
+            MenuOption choice = MenuModule::getUserChoice();
+            MenuModule::handleChoice(choice);
         }
         });
-    menuThread.detach(); // ·ÖÀëÏß³Ì£¬ÈÃÆäÔÚºóÌ¨ÔËĞĞ
+    menuThread.detach();
 
-    // ½ÓÊÜ¿Í»§¶ËÁ¬½Ó
     while (true) {
         sockaddr_in clientAddr;
         int clientAddrSize = sizeof(clientAddr);
         SOCKET clientSocket = accept(listenSocket, (sockaddr*)&clientAddr, &clientAddrSize);
 
         if (clientSocket == INVALID_SOCKET) {
-            cout << "½ÓÊÜÁ¬½ÓÊ§°Ü£¬´íÎóÂë: " << WSAGetLastError() << endl;
+            cout << "æ¥å—è¿æ¥å¤±è´¥ï¼Œé”™è¯¯ç : " << WSAGetLastError() << endl;
             continue;
         }
 
-        // ´´½¨Ïß³Ì´¦Àí¿Í»§¶Ë
         unsigned threadId;
-        HANDLE thread = (HANDLE)_beginthreadex(NULL, 0, clientThread,
-            (void*)clientSocket, 0, &threadId);
-        if (thread) {
-            CloseHandle(thread); // ·ÖÀëÏß³Ì£¬ÈÃËü¶ÀÁ¢ÔËĞĞ
-        }
+        HANDLE thread = (HANDLE)_beginthreadex(NULL, 0, clientThread, (void*)clientSocket, 0, &threadId);
+        if (thread) CloseHandle(thread);
         else {
-            cout << "´´½¨Ïß³ÌÊ§°Ü" << endl;
+            cout << "åˆ›å»ºçº¿ç¨‹å¤±è´¥" << endl;
             closesocket(clientSocket);
         }
     }
 
-    // ÇåÀí
+    DbLogModule::shutdown();
     closesocket(listenSocket);
     WSACleanup();
     return 0;

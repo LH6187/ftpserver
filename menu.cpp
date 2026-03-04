@@ -1,9 +1,11 @@
 #define NOMINMAX
 #include "menu.h"
-#include "log_module.h"
 #include "config_module.h"
 #include <iostream>
 #include <limits>
+#include "db_log_module.h"
+#include <iomanip>  
+#include <sstream> 
 
 using namespace std;
 
@@ -48,8 +50,53 @@ namespace MenuModule {
     void handleChoice(MenuOption choice) {
         switch (choice) {
         case OPTION_VIEW_LOGS:
-            LogModule::viewLogsMenu();
+        {
+            cout << "\n========================================" << endl;
+            cout << "           FTP Transfer Logs           " << endl;
+            cout << "========================================" << endl;
+            cout << left
+                << setw(20) << "Time"
+                << setw(16) << "Client IP"
+                << setw(10) << "Action"
+                << setw(30) << "File"
+                << setw(10) << "Status"
+                << setw(12) << "Size" << endl;
+            cout << string(100, '-') << endl;
+
+            // 从数据库查询最新的100条日志
+            auto logs = DbLogModule::queryLatestLogs(100);
+
+            if (logs.empty()) {
+                cout << "暂无日志记录" << endl;
+            }
+            else {
+                for (const auto& log : logs) {
+                    // 格式化文件大小
+                    stringstream sizeStr;
+                    if (log.fileSize < 1024) {
+                        sizeStr << log.fileSize << " B";
+                    }
+                    else if (log.fileSize < 1024 * 1024) {
+                        sizeStr << fixed << setprecision(1) << (log.fileSize / 1024.0) << " KB";
+                    }
+                    else {
+                        sizeStr << fixed << setprecision(1) << (log.fileSize / (1024.0 * 1024.0)) << " MB";
+                    }
+
+                    cout << "[" << log.timestamp << "] "
+                        << "[" << log.clientIP << "] "
+                        << "[" << log.operation << "] "
+                        << "\"" << log.filename << "\" "
+                        << "[" << log.status << "] "
+                        << "(" << sizeStr.str() << ")" << endl;
+                }
+            }
+
+            cout << string(100, '-') << endl;
+            cout << "总计: " << logs.size() << " 条记录" << endl;
+            cout << "========================================" << endl;
             break;
+        }
 
         case OPTION_REFRESH_STATUS:
             cout << "\n[Status] Server is running..." << endl;

@@ -27,6 +27,9 @@
     <ClCompile Include="config_module.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="db_log_module.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="sqlite3.h">
@@ -35,13 +38,16 @@
     <ClInclude Include="sqlite3ext.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="log_module.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
     <ClInclude Include="menu.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="config_module.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="SharedConfig.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="db_log_module.h">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>

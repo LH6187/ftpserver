@@ -124,14 +124,16 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="config_module.cpp" />
+    <ClCompile Include="db_log_module.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="menu.cpp" />
     <ClCompile Include="sqlite3.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="config_module.h" />
-    <ClInclude Include="log_module.h" />
+    <ClInclude Include="db_log_module.h" />
     <ClInclude Include="menu.h" />
+    <ClInclude Include="SharedConfig.h" />
     <ClInclude Include="sqlite3.h" />
     <ClInclude Include="sqlite3ext.h" />
   </ItemGroup>

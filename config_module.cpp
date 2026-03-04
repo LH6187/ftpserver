@@ -1,10 +1,11 @@
+// config_module.cpp
 #define NOMINMAX
 #include "config_module.h"
+#include "db_log_module.h"
 #include <iostream>
 #include <limits>
 #include <winsock2.h>
 #include <ws2tcpip.h>
-
 
 using namespace std;
 
@@ -14,14 +15,19 @@ ServerConfig g_ServerConfig;
 namespace ConfigModule {
 
     void initConfig() {
-        g_ServerConfig.listenIP = "0.0.0.0";
-        g_ServerConfig.listenPort = 21;
+        // 从数据库加载配置
+        ServerDbConfig dbConfig = DbLogModule::getCurrentConfig();
+
+        g_ServerConfig.listenIP = dbConfig.listenIP;
+        g_ServerConfig.listenPort = dbConfig.listenPort;
         g_ServerConfig.isDirty = false;
+
+        // 注释掉这行，避免重复打印
+        // cout << "从数据库加载配置: " << g_ServerConfig.listenIP << ":" << g_ServerConfig.listenPort << endl;
     }
 
     bool isValidIPv4(const string& ip) {
         sockaddr_in sa;
-        // 使用 inet_pton 验证 IP 格式
         int result = inet_pton(AF_INET, ip.c_str(), &(sa.sin_addr));
         return (result == 1);
     }
@@ -65,13 +71,20 @@ namespace ConfigModule {
             return false;
         }
 
+        // 更新内存中的配置
         g_ServerConfig.listenIP = input;
         g_ServerConfig.isDirty = true;
 
-        cout << "Success! New IP set to: " << input << endl;
-        cout << "*** NOTE: You must restart the server (Option 0) for changes to take effect. ***" << endl;
+        // 将新IP地址写入数据库
+        if (DbLogModule::updateListenIP(input)) {
+            cout << "Success! New IP set to: " << input << endl;
+            cout << "*** NOTE: You must restart the server (Option 0) for changes to take effect. ***" << endl;
+        }
+        else {
+            cout << "Error: Failed to save IP address to database!" << endl;
+        }
 
-        // 清理缓冲区
+        // 清理输入缓冲区
         cin.ignore(numeric_limits<streamsize>::max(), '\n');
         return true;
     }
